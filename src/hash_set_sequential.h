@@ -2,6 +2,11 @@
 #define HASH_SET_SEQUENTIAL_H
 
 #include <cassert>
+#include <algorithm>
+#include <cstddef>
+#include <functional>
+#include <utility>
+#include <vector>
 
 #include "src/hash_set_base.h"
 
@@ -9,7 +14,7 @@ template <typename T>
 class HashSetSequential : public HashSetBase<T> {
  public:
   explicit HashSetSequential(size_t initial_capacity)
-      : capacity_(initial_capacity), table_(initialBuckets) {}
+      : table_(std::max<size_t>(initial_capacity, initialBuckets)) {} {}
 
   // if elem in respective bucket, return false; else pushback to vector for
   // that bucket
@@ -17,14 +22,14 @@ class HashSetSequential : public HashSetBase<T> {
   bool Add(T elem) final {
     std::vector<T>& bucket = BucketFor(elem);
     // Bucket found, because iterator didn't reach end
-    if (std::find(bucket.begin(), bucket.end(), elem) != bucket.end = ()) {
+    if (std::find(bucket.begin(), bucket.end(), elem) != bucket.end()) {
       return false;
     }
     bucket.push_back(std::move(elem));
     size_ += 1;
 
     if (ResizeRule()) {
-      ReSize();
+      Resize();
     }
     return true;
   }
@@ -32,28 +37,28 @@ class HashSetSequential : public HashSetBase<T> {
   // if elem in respective bucket, remove it and return true; else return false
   bool Remove(T elem) final {
     std::vector<T>& bucket = BucketFor(elem);
-    auto elemPos = std::find(bucket.begin(), bucket.end(), elem);
-    if (it == bucket.end()) {
+    auto elem_pos = std::find(bucket.begin(), bucket.end(), elem);
+    if (elem_pos == bucket.end()) {
       return false;
     }
-    bucket.erase(it);
+    bucket.erase(elem_pos);
     size_ -= 1;
     return true;
   }
 
   // if elem in respective bucket, return true, else false
-  [[nodiscard]] bool Contains(T /*elem*/) final {
-    if (std::find(bucket.begin(), bucket.end(), elem) != bucket.end = ()) {
-      return false;
+  [[nodiscard]] bool Contains(T elem) final {
+    if (std::find(bucket.begin(), bucket.end(), elem) != bucket.end()) {
+      return true;
     }
-    return true;
+    return false;
   }
 
   // return size - also remember to update size everywhere else
   [[nodiscard]] size_t Size() const final { return size_; }
 
  private:
-  const size_t resizeRatio = 0.75;
+  const float_t resizeRatio = 0.75;
   const size_t initialBuckets = 4;
   size_t capacity_;
   size_t size_ = 0;
@@ -64,7 +69,7 @@ class HashSetSequential : public HashSetBase<T> {
     return table_[std::hash<T>()(elem) % table_.size()];
   }
 
-  // ReSize Rule
+  // Resize Rule
   bool ResizeRule() { return size_ / table_.size() > resizeRatio; }
 
   // double the capacity and rehash every element.
