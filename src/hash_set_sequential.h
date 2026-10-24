@@ -8,27 +8,46 @@
 template <typename T>
 class HashSetSequential : public HashSetBase<T> {
  public:
-  explicit HashSetSequential(size_t /*initial_capacity*/) {}
+  explicit HashSetSequential(size_t initial_capacity)
+      : capacity_(initial_capacity), table_(initialBuckets) {}
 
+  // if elem in respective bucket, return false; else pushback to vector for
+  // that bucket
+  // Also checks if resize is needed
   bool Add(T /*elem*/) final {
     assert(false && "Not implemented yet");
     return false;
   }
 
+  // if elem in respective bucket, remove it and return true; else return false
   bool Remove(T /*elem*/) final {
     assert(false && "Not implemented yet");
     return false;
   }
 
+  // if elem in respective bucket, return true, else false
   [[nodiscard]] bool Contains(T /*elem*/) final {
     assert(false && "Not implemented yet");
     return false;
   }
 
+  // return size - also remember to update size everywhere else
   [[nodiscard]] size_t Size() const final {
     assert(false && "Not implemented yet");
     return 0u;
   }
+
+ private:
+  const size_t initialBuckets = 4;
+  size_t capacity_;
+  size_t size_ = 0;
+  std::vector<std::vector<T>> table_;
+
+  // Uses the hash to return pointer to the appropriate bucket
+  std::vector<T>& BucketFor(T& /*elem*/) {}
+
+  // double the capacity and rehash every element.
+  void Resize() {}
 };
 
 #endif  // HASH_SET_SEQUENTIAL_H
