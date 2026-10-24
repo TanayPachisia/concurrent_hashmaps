@@ -30,9 +30,15 @@ class HashSetSequential : public HashSetBase<T> {
   }
 
   // if elem in respective bucket, remove it and return true; else return false
-  bool Remove(T /*elem*/) final {
-    assert(false && "Not implemented yet");
-    return false;
+  bool Remove(T elem) final {
+    std::vector<T>& bucket = BucketFor(elem);
+    auto elemPos = std::find(bucket.begin(), bucket.end(), elem);
+    if (it == bucket.end()) {
+      return false;
+    }
+    bucket.erase(it);
+    size_--;
+    return true;
   }
 
   // if elem in respective bucket, return true, else false
