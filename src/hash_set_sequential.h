@@ -14,7 +14,7 @@ template <typename T>
 class HashSetSequential : public HashSetBase<T> {
  public:
   explicit HashSetSequential(size_t initial_capacity)
-      : table_(std::max<size_t>(initial_capacity, initialBuckets)) {} {}
+      : table_(std::max<size_t>(initial_capacity, initialBuckets)) {}
 
   // if elem in respective bucket, return false; else pushback to vector for
   // that bucket
@@ -48,6 +48,7 @@ class HashSetSequential : public HashSetBase<T> {
 
   // if elem in respective bucket, return true, else false
   [[nodiscard]] bool Contains(T elem) final {
+    std::vector<T>& bucket = BucketFor(elem);
     if (std::find(bucket.begin(), bucket.end(), elem) != bucket.end()) {
       return true;
     }
@@ -58,9 +59,8 @@ class HashSetSequential : public HashSetBase<T> {
   [[nodiscard]] size_t Size() const final { return size_; }
 
  private:
-  const float_t resizeRatio = 0.75;
+  const float_t resizeRatio = 4;
   const size_t initialBuckets = 4;
-  size_t capacity_;
   size_t size_ = 0;
   std::vector<std::vector<T>> table_;
 
@@ -70,7 +70,7 @@ class HashSetSequential : public HashSetBase<T> {
   }
 
   // Resize Rule
-  bool ResizeRule() { return size_ / table_.size() > resizeRatio; }
+  bool ResizeRule() { return size_ / table_.size() > 4; }
 
   // double the capacity and rehash every element.
   void Resize() {
