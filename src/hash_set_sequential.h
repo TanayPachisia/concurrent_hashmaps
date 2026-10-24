@@ -20,7 +20,7 @@ class HashSetSequential : public HashSetBase<T> {
     if (std::find(bucket.begin(), bucket.end(), elem) != bucket.end = ()) {
       return false;
     }
-    bucket.push_back(elem);
+    bucket.push_back(std::move(elem));
     size_ += 1;
 
     if (ResizeRule()) {
@@ -65,7 +65,16 @@ class HashSetSequential : public HashSetBase<T> {
   bool ResizeRule() {}
 
   // double the capacity and rehash every element.
-  void Resize() {}
+  void Resize() {
+    std::vector<std::vector<T>> new_table(table_.size() * 2);
+    for (std::vector<T>& bucket : table_) {
+      for (T& elem : bucket) {
+        new_table[std::hash<T>()(elem) % new_table.size()].push_back(
+            std::move(elem));
+      }
+    }
+    table_ = std::move(new_table);
+  }
 };
 
 #endif  // HASH_SET_SEQUENTIAL_H
