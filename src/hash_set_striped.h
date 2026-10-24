@@ -50,6 +50,7 @@ class HashSetStriped : public HashSetBase<T> {
     }
 
     bucket.push_back(std::move(elem));
+    size_.fetch_add(1);
     lock.unlock();
 
     ScopedVectorLock global_lock(mtxs_);
@@ -71,6 +72,8 @@ class HashSetStriped : public HashSetBase<T> {
 
     std::iter_swap(it, std::prev(bucket.end()));
     bucket.pop_back();
+    size_.fetch_sub(1);
+
     return true;
   }
 
@@ -80,28 +83,14 @@ class HashSetStriped : public HashSetBase<T> {
     return vec_contains(buckets_[bucket_index(elem)], elem);
   }
 
-  [[nodiscard]] size_t Size() const final {
-    ScopedVectorLock lock(mtxs_);
-
-    return get_size();
-  }
+  [[nodiscard]] size_t Size() const final { return size_.load(); }
 
  private:
-  size_t get_size() const {
-    size_t size = 0;
-
-    for (auto& bucket : buckets_) {
-      size += bucket.size();
-    }
-
-    return size;
-  }
-
   bool vec_contains(const std::vector<T>& vec, const T& target) const {
     return std::find(vec.begin(), vec.end(), target) != vec.end();
   }
 
-  bool policy() const { return (get_size() / cap_) > 4; }
+  bool policy() const { return (size_.load() / cap_) > 4; }
 
   void resize() {
     size_t new_cap = cap_ * 2;
@@ -125,6 +114,7 @@ class HashSetStriped : public HashSetBase<T> {
     return *(mtxs_[std::hash<T>()(elem) % mtxs_.size()]);
   }
 
+  std::atomic<size_t> size_{0};
   size_t cap_{0};
   std::vector<std::vector<T>> buckets_;
   mutable std::vector<std::unique_ptr<std::mutex>> mtxs_;
