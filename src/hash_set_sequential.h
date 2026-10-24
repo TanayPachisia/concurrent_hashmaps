@@ -1,8 +1,8 @@
 #ifndef HASH_SET_SEQUENTIAL_H
 #define HASH_SET_SEQUENTIAL_H
 
-#include <cassert>
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <functional>
 #include <utility>
