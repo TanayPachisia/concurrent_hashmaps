@@ -18,7 +18,7 @@ class HashSetSequential : public HashSetBase<T> {
     std::vector<T>& bucket = BucketFor(elem);
     // Bucket found, because iterator didn't reach end
     if (std::find(bucket.begin(), bucket.end(), elem) != bucket.end = ()) {
-      return False;
+      return false;
     }
     bucket.push_back(elem);
     size_ += 1;
@@ -26,7 +26,7 @@ class HashSetSequential : public HashSetBase<T> {
     if (ResizeRule()) {
       ReSize();
     }
-    return True
+    return true;
   }
 
   // if elem in respective bucket, remove it and return true; else return false
@@ -43,8 +43,10 @@ class HashSetSequential : public HashSetBase<T> {
 
   // if elem in respective bucket, return true, else false
   [[nodiscard]] bool Contains(T /*elem*/) final {
-    assert(false && "Not implemented yet");
-    return false;
+    if (std::find(bucket.begin(), bucket.end(), elem) != bucket.end = ()) {
+      return false;
+    }
+    return true;
   }
 
   // return size - also remember to update size everywhere else
