@@ -53,16 +53,19 @@ class HashSetSequential : public HashSetBase<T> {
   [[nodiscard]] size_t Size() const final { return size_; }
 
  private:
+  const size_t resizeRatio = 0.75;
   const size_t initialBuckets = 4;
   size_t capacity_;
   size_t size_ = 0;
   std::vector<std::vector<T>> table_;
 
   // Uses the hash to return pointer to the appropriate bucket
-  std::vector<T>& BucketFor(T& /*elem*/) {}
+  std::vector<T>& BucketFor(T& elem) {
+    return table_[std::hash<T>()(elem) % table_.size()];
+  }
 
   // ReSize Rule
-  bool ResizeRule() {}
+  bool ResizeRule() { return size_ / table_.size() > resizeRatio; }
 
   // double the capacity and rehash every element.
   void Resize() {
