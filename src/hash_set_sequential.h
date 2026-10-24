@@ -37,7 +37,7 @@ class HashSetSequential : public HashSetBase<T> {
       return false;
     }
     bucket.erase(it);
-    size_--;
+    size_ -= 1;
     return true;
   }
 
@@ -50,10 +50,7 @@ class HashSetSequential : public HashSetBase<T> {
   }
 
   // return size - also remember to update size everywhere else
-  [[nodiscard]] size_t Size() const final {
-    assert(false && "Not implemented yet");
-    return 0u;
-  }
+  [[nodiscard]] size_t Size() const final { return size_; }
 
  private:
   const size_t initialBuckets = 4;
