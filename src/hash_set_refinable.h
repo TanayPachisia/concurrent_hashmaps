@@ -19,8 +19,8 @@ class HashSetRefinable : public HashSetBase<T> {
  public:
   explicit HashSetRefinable(size_t initial_capacity)
     : cap_(initial_capacity), buckets_(cap_) {
-      all_locks_arrays_.push_back(std::make_unique<LockArray>(cap_));
-      current_lock_.store(all_locks_arrays_.back().get());
+      all_lock_arrays_.push_back(std::make_unique<LockArray>(cap_));
+      current_locks_.store(all_lock_arrays_.back().get());
     }
 
   bool Add(T elem) final {
