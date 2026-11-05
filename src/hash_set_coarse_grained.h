@@ -15,21 +15,26 @@ template <typename T>
 class HashSetCoarseGrained : public HashSetBase<T> {
  public:
   explicit HashSetCoarseGrained(size_t initial_capacity)
-      : cap_{initial_capacity}, buckets_(cap_) {}
+      : buckets_(std::max<size_t>(initial_capacity, 1)) {}
 
   bool Add(T elem) final {
+    // using RAII wrapper for lock management, this diverges from
+    // the book extract as it is more idiomatic in c++
     std::unique_lock<std::mutex> lock(mtx_);
 
-    auto& bucket = buckets_[bucket_index(elem)];
-    if (vec_contains(bucket, elem)) {
+    auto& bucket = BucketFor(elem);
+    if (VecContains(bucket, elem)) {
       return false;
     }
 
     bucket.push_back(std::move(elem));
     size_++;
 
-    if (policy()) {
-      resize();
+    // Don't want to release the lock at this point,
+    // the book permits a race condition in its implementation
+    // the access to 'table.length' without the lock is racy in fig 13.3
+    if (Policy()) {
+      Resize();
     }
     return true;
   }
@@ -37,14 +42,13 @@ class HashSetCoarseGrained : public HashSetBase<T> {
   bool Remove(T elem) final {
     std::unique_lock<std::mutex> lock(mtx_);
 
-    auto& bucket = buckets_[bucket_index(elem)];
+    auto& bucket = BucketFor(elem);
     auto it = std::find(bucket.begin(), bucket.end(), elem);
     if (it == bucket.end()) {
       return false;
     }
 
-    std::iter_swap(it, std::prev(bucket.end()));
-    bucket.pop_back();
+    bucket.erase(it);
     size_--;
     return true;
   }
@@ -52,43 +56,42 @@ class HashSetCoarseGrained : public HashSetBase<T> {
   [[nodiscard]] bool Contains(T elem) final {
     std::unique_lock<std::mutex> lock(mtx_);
 
-    return vec_contains(buckets_[bucket_index(elem)], elem);
+    return VecContains(BucketFor(elem), elem);
   }
 
   [[nodiscard]] size_t Size() const final {
+    // acquire global lock to prevent races on size_
     std::unique_lock<std::mutex> lock(mtx_);
 
     return size_;
   }
 
  private:
-  bool vec_contains(const std::vector<T>& vec, const T& target) const {
+  bool VecContains(const std::vector<T>& vec, const T& target) const {
     return std::find(vec.begin(), vec.end(), target) != vec.end();
   }
 
-  bool policy() const { return (size_ / cap_) > 4; }
+  bool Policy() const { return size_ / buckets_.size() > 4; }
 
-  void resize() {
-    size_t new_cap = cap_ * 2;
-    std::vector<std::vector<T>> new_buckets(new_cap);
+  void Resize() {
+    size_t old_cap = buckets_.size();
+    std::vector<std::vector<T>> new_buckets(old_cap * 2);
 
     for (auto& bucket : buckets_) {
       for (auto& elem : bucket) {
-        new_buckets[std::hash<T>()(elem) % new_cap].push_back(std::move(elem));
+        new_buckets[std::hash<T>()(elem) % new_buckets.size()].push_back(std::move(elem));
       }
     }
 
     buckets_ = std::move(new_buckets);
-    cap_ = new_cap;
   }
 
-  size_t bucket_index(const T& elem) const {
-    return std::hash<T>()(elem) % cap_;
+  std::vector<T>& BucketFor(const T& elem) {
+    return buckets_[std::hash<T>()(elem) % buckets_.size()];
   }
 
   mutable std::mutex mtx_;
   size_t size_{0};
-  size_t cap_{0};
   std::vector<std::vector<T>> buckets_;
 };
 
