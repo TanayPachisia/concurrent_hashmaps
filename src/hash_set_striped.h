@@ -51,18 +51,21 @@ class HashSetStriped : public HashSetBase<T> {
 
     bucket.push_back(std::move(elem));
     size_.fetch_add(1);
+    bool need_resize = policy();
     lock.unlock();
 
-    ScopedVectorLock global_lock(mtxs_);
-    if (policy()) {
-      resize();
+    if (need_resize) {
+      ScopedVectorLock global_lock(mtxs_);
+      if (policy()) {
+        resize();
+      }
     }
 
     return true;
   }
 
   bool Remove(T elem) final {
-    std::unique_lock<std::mutex> lock(mtx(elem));
+    std::scoped_lock<std::mutex> lock(mtx(elem));
 
     auto& bucket = buckets_[bucket_index(elem)];
     auto it = std::find(bucket.begin(), bucket.end(), elem);
@@ -78,7 +81,7 @@ class HashSetStriped : public HashSetBase<T> {
   }
 
   [[nodiscard]] bool Contains(T elem) final {
-    std::unique_lock<std::mutex> lock(mtx(elem));
+    std::scoped_lock<std::mutex> lock(mtx(elem));
 
     return vec_contains(buckets_[bucket_index(elem)], elem);
   }
