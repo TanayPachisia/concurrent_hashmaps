@@ -10,6 +10,9 @@
 
 #include "src/hash_set_base.h"
 
+constexpr size_t initialBuckets = 4;
+constexpr float_t resizeRatio = 4;
+
 template <typename T>
 class HashSetSequential : public HashSetBase<T> {
  public:
@@ -28,7 +31,7 @@ class HashSetSequential : public HashSetBase<T> {
     bucket.push_back(std::move(elem));
     size_ += 1;
 
-    if (ResizeRule()) {
+    if (Policy()) {
       Resize();
     }
     return true;
@@ -49,18 +52,14 @@ class HashSetSequential : public HashSetBase<T> {
   // if elem in respective bucket, return true, else false
   [[nodiscard]] bool Contains(T elem) final {
     std::vector<T>& bucket = BucketFor(elem);
-    if (std::find(bucket.begin(), bucket.end(), elem) != bucket.end()) {
-      return true;
-    }
-    return false;
+
+    return std::find(bucket.begin(), bucket.end(), elem) != bucket.end();
   }
 
   // return size - also remember to update size everywhere else
   [[nodiscard]] size_t Size() const final { return size_; }
 
  private:
-  const float_t resizeRatio = 4;
-  const size_t initialBuckets = 4;
   size_t size_ = 0;
   std::vector<std::vector<T>> table_;
 
@@ -70,12 +69,12 @@ class HashSetSequential : public HashSetBase<T> {
   }
 
   // Resize Rule
-  bool ResizeRule() { return size_ / table_.size() > 4; }
+  bool Policy() { return size_ / table_.size() > 4; }
 
   // double the capacity and rehash every element.
   void Resize() {
     std::vector<std::vector<T>> new_table(table_.size() * 2);
-    for (std::vector<T>& bucket : table_) {
+    for (auto& bucket : table_) {
       for (T& elem : bucket) {
         new_table[std::hash<T>()(elem) % new_table.size()].push_back(
             std::move(elem));
