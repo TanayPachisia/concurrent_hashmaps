@@ -14,31 +14,31 @@
 
 class ScopedVectorLock {
  public:
-  ScopedVectorLock(std::vector<std::mutex>& mtxs)
-      : mtxs_{mtxs} {
-    for (auto& mtx : mtxs_) {
-      mtx.lock();
+  ScopedVectorLock(std::vector<std::mutex>& stripes)
+      : stripes_{stripes} {
+    for (auto& stripe : stripes_) {
+      stripe.lock();
     }
   }
 
   ~ScopedVectorLock() {
-    for (auto& mtx : mtxs_) {
-      mtx.unlock();
+    for (auto& stripe : stripes_) {
+      stripe.unlock();
     }
   }
 
  private:
-  std::vector<std::mutex>& mtxs_;
+  std::vector<std::mutex>& stripes_;
 };
 
 template <typename T>
 class HashSetStriped : public HashSetBase<T> {
  public:
   explicit HashSetStriped(size_t initial_capacity)
-      : cap_{initial_capacity}, buckets_(initial_capacity), mtxs_(initial_capacity) {}
+      : buckets_(std::max<size_t>(initial_capacity, 1)), stripes_(std::max<size_t>(initial_capacity, 1)) {}
 
   bool Add(T elem) final {
-    std::unique_lock<std::mutex> lock(mtx(elem));
+    std::unique_lock<std::mutex> lock(Stripe(elem));
 
     auto& bucket = BucketFor(elem);
     if (VecContains(bucket, elem)) {
@@ -46,22 +46,24 @@ class HashSetStriped : public HashSetBase<T> {
     }
 
     bucket.push_back(std::move(elem));
-    size_.fetch_add(1);
-    bool need_resize = Policy();
+    // relaxed ordering since mutexes handle our synchronisation
+    size_.fetch_add(1, std::memory_order_relaxed);
+
+    if (!Policy()) return true;
     lock.unlock();
 
-    if (need_resize) {
-      ScopedVectorLock global_lock(mtxs_);
-      if (Policy()) {
-        Resize();
-      }
+    ScopedVectorLock global_lock(stripes_);
+    if (Policy()) {
+      Resize();
     }
-
+    
     return true;
   }
 
   bool Remove(T elem) final {
-    std::scoped_lock<std::mutex> lock(mtx(elem));
+    // acquire the lock fo the element's stripe, acquire semantics
+    // on lock, release on unlock (don't expose inconsitent state)
+    std::scoped_lock<std::mutex> lock(Stripe(elem));
 
     auto& bucket = BucketFor(elem);
     auto it = std::find(bucket.begin(), bucket.end(), elem);
@@ -69,32 +71,38 @@ class HashSetStriped : public HashSetBase<T> {
       return false;
     }
 
-    std::iter_swap(it, std::prev(bucket.end()));
-    bucket.pop_back();
-    size_.fetch_sub(1);
+    bucket.erase(it);
+    // relaxed ordering since mutexes handle our synchronisation
+    size_.fetch_sub(1, std::memory_order_relaxed);
 
     return true;
   }
 
   [[nodiscard]] bool Contains(T elem) final {
-    std::scoped_lock<std::mutex> lock(mtx(elem));
+    // we don't want anyone to modify the buckets while we're checking for
+    // elem inside of it
+    std::scoped_lock<std::mutex> lock(Stripe(elem));
 
     return VecContains(BucketFor(elem), elem);
   }
 
-  [[nodiscard]] size_t Size() const final { return size_.load(); }
+  // relaxed since returned value can't be used for synchronisation anyway, its just an observation
+  [[nodiscard]] size_t Size() const final { return size_.load(std::memory_order_relaxed); }
 
  private:
   bool VecContains(const std::vector<T>& vec, const T& target) const {
     return std::find(vec.begin(), vec.end(), target) != vec.end();
   }
 
-  bool Policy() const { return (size_.load() / cap_) > 4; }
+  bool Policy() const { 
+    // relaxed ordering since mutexes handle our synchronisation
+    // accessing buckets_.size is not a race condition since we only change bucket.size()
+    // during resizing when global lock is held, nobody can access size when this happens
+    return size_.load(std::memory_order_relaxed) / buckets_.size() > 4; 
+  }
 
   void Resize() {
     size_t new_cap = buckets_.size() * 2;
-
-
     std::vector<std::vector<T>> new_buckets(new_cap);
 
     for (auto& bucket : buckets_) {
@@ -104,7 +112,6 @@ class HashSetStriped : public HashSetBase<T> {
     }
 
     buckets_ = std::move(new_buckets);
-    cap_ = new_cap;
   }
 
   std::vector<T>& BucketFor(const T& elem) {
@@ -112,14 +119,13 @@ class HashSetStriped : public HashSetBase<T> {
   }
 
 
-  std::mutex& mtx(const T& elem) {
-    return mtxs_[std::hash<T>()(elem) % mtxs_.size()];
+  std::mutex& Stripe(const T& elem) {
+    return stripes_[std::hash<T>()(elem) % stripes_.size()];
   }
 
   std::atomic<size_t> size_{0};
-  std::atomic<size_t> cap_{0};
   std::vector<std::vector<T>> buckets_;
-  mutable std::vector<std::mutex> mtxs_;
+  std::vector<std::mutex> stripes_;
 };
 
 #endif  // HASH_SET_STRIPED_H
