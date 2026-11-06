@@ -18,7 +18,7 @@ class HashSetRefinable : public HashSetBase<T> {
  public:
   explicit HashSetRefinable(size_t initial_capacity)
     : buckets_(std::max<size_t>(initial_capacity, 1)) {
-      all_lock_arrays_.push_back(std::make_unique<LockArray>(initial_capacity));
+      all_lock_arrays_.push_back(std::make_unique<LockArray>(buckets_.size()));
       current_locks_.store(all_lock_arrays_.back().get());
     }
 
@@ -32,7 +32,8 @@ class HashSetRefinable : public HashSetBase<T> {
       }
       bucket.push_back(std::move(elem));
 
-      // relaxed ordering since mutexes handle our synchronisation
+      // relaxed ordering since we only need atomicity, size_ doesn't
+      // synchronise anything
       size_.fetch_add(1, std::memory_order_relaxed);
       
       if (!Policy()) return true;
@@ -52,7 +53,8 @@ class HashSetRefinable : public HashSetBase<T> {
     }
     bucket.erase(it);
 
-    // relaxed ordering since mutexes handle our synchronisation
+    // relaxed ordering since we only need atomicity, size_ doesn't
+    // synchronise anything
     size_.fetch_sub(1, std::memory_order_relaxed);
     return true;
   }
@@ -65,7 +67,8 @@ class HashSetRefinable : public HashSetBase<T> {
   }
 
   [[nodiscard]] size_t Size() const final {
-  // relaxed since returned value can't be used for synchronisation anyway, its just an observation
+    // relaxed ordering since we only need atomicity, size_ doesn't
+    // synchronise anything
     return size_.load(std::memory_order_relaxed);
   }
 
@@ -75,8 +78,7 @@ class HashSetRefinable : public HashSetBase<T> {
   std::unique_lock<std::mutex> AcquireStripe(const T& elem) {
     for (;;) {
       // relaxed since synchronisation is actually handled by locks beneath
-      // do we even need this line?? it puts contention on resizing_ on every acquire
-      // even though resizes are rare. 
+      // prevents lock contention during resizing
       while (resizing_.load(std::memory_order_relaxed)) {}
       
       // acquire loads since doesn't resizing acquire provide the necessary synchronisation
@@ -90,8 +92,8 @@ class HashSetRefinable : public HashSetBase<T> {
     }
   }
 
-  // relaxed ordering since mutexes handle our synchronisation
-  // Policy being called inside resize assumes mutexes held?
+  // relaxed ordering since we only need atomicity, size_ doesn't
+  // synchronise anything. synchronisation is handled by our mutexes and the releasing_ atomic.
   bool Policy() const { return size_.load(std::memory_order_relaxed) / buckets_.size() > 4; }
 
   void Resize() {
@@ -118,7 +120,8 @@ class HashSetRefinable : public HashSetBase<T> {
       buckets_ = std::move(new_buckets);
 
       all_lock_arrays_.push_back(std::make_unique<LockArray>(new_cap));
-      // release store to publicise state updates to all_lock_arrays_
+      // release store to publicise state updates to all_lock_arrays_ for new
+      // acquirers to be able to see
       current_locks_.store(all_lock_arrays_.back().get(), std::memory_order_release);
     }
 
