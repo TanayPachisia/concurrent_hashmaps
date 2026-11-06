@@ -74,9 +74,9 @@ class HashSetRefinable : public HashSetBase<T> {
 
   std::unique_lock<std::mutex> AcquireStripe(const T& elem) {
     for (;;) {
-      // relaxed since synchronisation is mostly handled by locks
+      // relaxed since synchronisation is actually handled by locks beneath
       // do we even need this line?? it puts contention on resizing_ on every acquire
-      // even though resizes are rare
+      // even though resizes are rare. 
       while (resizing_.load(std::memory_order_relaxed)) {}
       
       // acquire loads since doesn't resizing acquire provide the necessary synchronisation
@@ -84,7 +84,7 @@ class HashSetRefinable : public HashSetBase<T> {
       // so synchronise with the release store of current locks so we get a value in valid state
       LockArray* locks = current_locks_.load(std::memory_order_acquire);
       std::unique_lock<std::mutex> lock((*locks)[std::hash<T>()(elem) % locks->size()]);
-      if (!resizing_.load(std::memory_order_acquire) && current_locks_.load() == locks) {
+      if (!resizing_.load(std::memory_order_acquire) && current_locks_.load(std::memory_order_acquire) == locks) {
         return lock;
       }
     }
@@ -96,8 +96,10 @@ class HashSetRefinable : public HashSetBase<T> {
 
   void Resize() {
     bool expected = false;
-    // relaxed since synchronisation is done by Quiesce
-    if (!resizing_.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+    // acquire success since we don't want to start quiesce until we are the releaser
+    // and we need to make sure the last resize's completed changes are visible
+    // relaxed fail since we don't need to synchronise anything in this case, we're just looping
+    if (!resizing_.compare_exchange_strong(expected, true, std::memory_order_acquire, std::memory_order_relaxed)) {
       return;
     }
 
@@ -134,7 +136,8 @@ class HashSetRefinable : public HashSetBase<T> {
 
   void Quiesce() {
     // relaxed order since synchronisation provided by acquiring resize
-    for (auto& m : *current_locks_.load(std::memory_order_relaxed)) {
+    auto* locks = current_locks_.load(std::memory_order_relaxed);
+    for (auto& m : *locks) {
       m.lock();
       m.unlock();
     }
