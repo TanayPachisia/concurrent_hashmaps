@@ -10,24 +10,24 @@
 
 #include "src/hash_set_base.h"
 
-constexpr size_t initialBuckets = 4;
 constexpr float_t resizeRatio = 4;
 
+// hash set with no thread safety
 template <typename T>
 class HashSetSequential : public HashSetBase<T> {
  public:
   explicit HashSetSequential(size_t initial_capacity)
-      : table_(std::max<size_t>(initial_capacity, initialBuckets)) {}
+        // min needs to have at least 1 elem otherwise doubling size will have no effect (also 0 would result in divide by zero in bucket calculation)
+      : table_(std::max<size_t>(initial_capacity), 1) {}
 
-  // if elem in respective bucket, return false; else pushback to vector for
-  // that bucket
-  // Also checks if resize is needed
   bool Add(T elem) final {
     std::vector<T>& bucket = BucketFor(elem);
-    // Bucket found, because iterator didn't reach end
+    // if bucket found (iterator does not reach end), do nothing
     if (std::find(bucket.begin(), bucket.end(), elem) != bucket.end()) {
       return false;
     }
+
+    // move so we don't copy the elem
     bucket.push_back(std::move(elem));
     size_ += 1;
 
@@ -60,6 +60,8 @@ class HashSetSequential : public HashSetBase<T> {
   [[nodiscard]] size_t Size() const final { return size_; }
 
  private:
+  //resize once the average bucket length exceeds 4 - as per textbook
+  static constexpr size_t kMaxAverageBucketLength = 4;
   size_t size_ = 0;
   std::vector<std::vector<T>> table_;
 
@@ -68,10 +70,11 @@ class HashSetSequential : public HashSetBase<T> {
     return table_[std::hash<T>()(elem) % table_.size()];
   }
 
-  // Resize Rule
-  bool Policy() { return size_ / table_.size() > 4; }
+  // Resize Rule 
+  bool Policy() { return size_ / table_.size() > kMaxAverageBucketLength; }
 
-  // double the capacity and rehash every element.
+  // Double the capacity and rehash every element, since an element's bucket depends on the number of buckets.
+  // No calls to existing public methods
   void Resize() {
     std::vector<std::vector<T>> new_table(table_.size() * 2);
     for (auto& bucket : table_) {
