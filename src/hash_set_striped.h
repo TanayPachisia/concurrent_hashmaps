@@ -101,6 +101,8 @@ class HashSetStriped : public HashSetBase<T> {
     return size_.load(std::memory_order_relaxed) / buckets_.size() > 4; 
   }
 
+  // private member function so we can simplify compared to the book
+  // by assuming we have the necessary locks before entering the function
   void Resize() {
     size_t new_cap = buckets_.size() * 2;
     std::vector<std::vector<T>> new_buckets(new_cap);

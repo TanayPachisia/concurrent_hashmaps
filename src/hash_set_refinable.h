@@ -11,96 +11,100 @@
 #include <utility>
 #include <vector>
 
-
 #include "src/hash_set_base.h"
+
+// shared ptr instead of unique ptr?
 
 template <typename T>
 class HashSetRefinable : public HashSetBase<T> {
  public:
   explicit HashSetRefinable(size_t initial_capacity)
-    : cap_(initial_capacity), buckets_(cap_) {
-      all_lock_arrays_.push_back(std::make_unique<LockArray>(cap_));
+    : buckets_(std::max<size_t>(initial_capacity, 1)) {
+      all_lock_arrays_.push_back(std::make_unique<LockArray>(initial_capacity));
       current_locks_.store(all_lock_arrays_.back().get());
     }
 
   bool Add(T elem) final {
-    size_t hash = std::hash<T>()(elem);
-    bool need_resize;
     {
-      std::unique_lock<std::mutex> lock = AcquireStripe(hash);
-      auto& bucket = buckets_[hash % cap_];
+      std::unique_lock<std::mutex> lock = AcquireStripe(elem);
+
+      auto& bucket = BucketFor(elem);
       if (VecContains(bucket, elem)) {
         return false;
       }
       bucket.push_back(std::move(elem));
-      size_.fetch_add(1);
-      need_resize = Policy();
+
+      // relaxed ordering since mutexes handle our synchronisation
+      size_.fetch_add(1, std::memory_order_relaxed);
+      
+      if (!Policy()) return true;
     }
-    if (need_resize) {
-      Resize();
-    }
+    
+    Resize();
     return true;
   }
 
   bool Remove(T elem) final {
-    size_t hash = std::hash<T>()(elem);
-    std::unique_lock<std::mutex> lock = AcquireStripe(hash);
-    auto& bucket = buckets_[hash % cap_];
+    std::unique_lock<std::mutex> lock = AcquireStripe(elem);
+
+    auto& bucket = BucketFor(elem);
     auto it = std::find(bucket.begin(), bucket.end(), elem);
     if (it == bucket.end()) {
       return false;
     }
-    std::iter_swap(it, std::prev(bucket.end()));
-    bucket.pop_back();
-    size_.fetch_sub(1);
+    bucket.erase(it);
+
+    // relaxed ordering since mutexes handle our synchronisation
+    size_.fetch_sub(1, std::memory_order_relaxed);
     return true;
   }
 
   [[nodiscard]] bool Contains(T elem) final {
-    size_t hash = std::hash<T>()(elem);
-    std::unique_lock<std::mutex> lock = AcquireStripe(hash);
-    return VecContains(buckets_[hash % cap_], elem);
-
+    // we don't want anyone to modify the buckets while we're checking for
+    // elem inside of it
+    std::unique_lock<std::mutex> lock = AcquireStripe(elem);
+    return VecContains(BucketFor(elem), elem);
   }
 
   [[nodiscard]] size_t Size() const final {
-    return size_.load();
+  // relaxed since returned value can't be used for synchronisation anyway, its just an observation
+    return size_.load(std::memory_order_relaxed);
   }
 
  private:
   using LockArray = std::vector<std::mutex>;
 
-  std::unique_lock<std::mutex> AcquireStripe(size_t hash) {
+  std::unique_lock<std::mutex> AcquireStripe(const T& elem) {
     for (;;) {
-      resizing_.wait(true);
-      LockArray* locks = current_locks_.load();
-      std::unique_lock<std::mutex> lock((*locks)[hash % locks->size()]);
-      if (!resizing_.load() && current_locks_.load() == locks) {
+      while (resizing_.load(std::memory_order_acquire)) {}
+      
+      // acquire load since doesn't resizing acquire provide the necessary synchronisation
+      // (someone could start resizing after our loop above finishes)
+      // so synchronise with the release store of current locks so we get a value in valid state
+      LockArray* locks = current_locks_.load(std::memory_order_acquire);
+      std::unique_lock<std::mutex> lock((*locks)[std::hash<T>()(elem) % locks->size()]);
+      if (!resizing_.load(std::memory_order_acquire) && current_locks_.load() == locks) {
         return lock;
       }
     }
   }
 
-  [[nodiscard]] bool VecContains(const std::vector<T>& vec,
-                                 const T& target) const {
-    return std::find(vec.begin(), vec.end(), target) != vec.end();
-  }
-
-  [[nodiscard]] bool Policy() const { return size_.load() / cap_ > 4; }
+  // relaxed ordering since mutexes handle our synchronisation
+  // Policy being called inside resize assumes mutexes held?
+  bool Policy() const { return size_.load(std::memory_order_relaxed) / buckets_.size() > 4; }
 
   void Resize() {
     bool expected = false;
-    if (!resizing_.compare_exchange_strong(expected, true)) {
+    // mem order?
+    if (!resizing_.compare_exchange_strong(expected, true, std::memory_order_acquire)) {
       return;
     }
 
-    for (std::mutex& m : *current_locks_.load()) {
-      m.lock();
-      m.unlock();
-    }
+    Quiesce();
+    // we now have exclusive access to buckets_
 
     if (Policy()) {
-      size_t new_cap = cap_ * 2;
+      size_t new_cap = buckets_.size() * 2;
       std::vector<std::vector<T>> new_buckets(new_cap);
       for (auto& bucket : buckets_) {
         for (auto& elem : bucket) {
@@ -109,20 +113,38 @@ class HashSetRefinable : public HashSetBase<T> {
         }
       }
       buckets_ = std::move(new_buckets);
-      cap_ = new_cap;
 
       all_lock_arrays_.push_back(std::make_unique<LockArray>(new_cap));
-      current_locks_.store(all_lock_arrays_.back().get());
+      current_locks_.store(all_lock_arrays_.back().get(), std::memory_order_release);
     }
 
-    resizing_.store(false);
-    resizing_.notify_all();
+    resizing_.store(false, std::memory_order_release);
+  }
+
+  bool VecContains(const std::vector<T>& vec, const T& target) const {
+    return std::find(vec.begin(), vec.end(), target) != vec.end();
+  }
+
+  std::vector<T>& BucketFor(const T& elem) {
+    return buckets_[std::hash<T>()(elem) % buckets_.size()];
+  }
+
+  void Quiesce() {
+    // relaxed order since synchronisation provided by acquiring resize
+    for (auto& m : *current_locks_.load(std::memory_order_relaxed)) {
+      m.lock();
+      m.unlock();
+    }
   }
 
   std::atomic<size_t> size_{0};
-  size_t cap_;
   std::vector<std::vector<T>> buckets_;
+  // We don't need to track the "owning" thread, just whether someone is resizing
+  // since our Resize method is private and doesn't support reentrancy
   std::atomic<bool> resizing_{false};
+  // diverge from the book: the implementation exposes a race condition where a thread can access
+  // the array of locks whilst it is in an invalid state, this pair of members
+  // allows us to ensure AcquireStripe will only acquire a valid stripe
   std::atomic<LockArray*> current_locks_{nullptr};
   std::vector<std::unique_ptr<LockArray>> all_lock_arrays_;
 };

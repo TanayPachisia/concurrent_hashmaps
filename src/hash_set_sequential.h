@@ -18,7 +18,7 @@ class HashSetSequential : public HashSetBase<T> {
  public:
   explicit HashSetSequential(size_t initial_capacity)
         // min needs to have at least 1 elem otherwise doubling size will have no effect (also 0 would result in divide by zero in bucket calculation)
-      : table_(std::max<size_t>(initial_capacity), 1) {}
+      : table_(std::max<size_t>(initial_capacity, 1)) {}
 
   bool Add(T elem) final {
     std::vector<T>& bucket = BucketFor(elem);
