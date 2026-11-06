@@ -13,8 +13,6 @@
 
 #include "src/hash_set_base.h"
 
-// shared ptr instead of unique ptr?
-
 template <typename T>
 class HashSetRefinable : public HashSetBase<T> {
  public:
@@ -76,9 +74,12 @@ class HashSetRefinable : public HashSetBase<T> {
 
   std::unique_lock<std::mutex> AcquireStripe(const T& elem) {
     for (;;) {
-      while (resizing_.load(std::memory_order_acquire)) {}
+      // relaxed since synchronisation is mostly handled by locks
+      // do we even need this line?? it puts contention on resizing_ on every acquire
+      // even though resizes are rare
+      while (resizing_.load(std::memory_order_relaxed)) {}
       
-      // acquire load since doesn't resizing acquire provide the necessary synchronisation
+      // acquire loads since doesn't resizing acquire provide the necessary synchronisation
       // (someone could start resizing after our loop above finishes)
       // so synchronise with the release store of current locks so we get a value in valid state
       LockArray* locks = current_locks_.load(std::memory_order_acquire);
@@ -95,8 +96,8 @@ class HashSetRefinable : public HashSetBase<T> {
 
   void Resize() {
     bool expected = false;
-    // mem order?
-    if (!resizing_.compare_exchange_strong(expected, true, std::memory_order_acquire)) {
+    // relaxed since synchronisation is done by Quiesce
+    if (!resizing_.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
       return;
     }
 
@@ -115,9 +116,11 @@ class HashSetRefinable : public HashSetBase<T> {
       buckets_ = std::move(new_buckets);
 
       all_lock_arrays_.push_back(std::make_unique<LockArray>(new_cap));
+      // release store to publicise state updates to all_lock_arrays_
       current_locks_.store(all_lock_arrays_.back().get(), std::memory_order_release);
     }
 
+    // release order since we want new buckets to be visible to new Adds / Removals
     resizing_.store(false, std::memory_order_release);
   }
 
